@@ -1,0 +1,117 @@
+import logging
+from telegram import Bot, Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+import requests
+from PIL import Image
+import io
+import random
+
+# Bot Token va Admin ID
+BOT_TOKEN = "7769995757:AAFLyAo1o46X5GWh-djiiJxIOUhZmKrQc-s"
+ADMIN_ID = 2099922900
+REQUIRED_CHANNELS = ["@your_channel1", "@your_channel2"]  # Tekshiriladigan kanallar
+
+# Loggerni sozlash
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# Ma'lumotlar
+users = {}
+uploaded_photos = set()
+top_100 = []
+
+# Botni ishga tushirish
+def start(update, context):
+    user = update.message.from_user
+    if not check_membership(user.id, context.bot):
+        update.message.reply_text("Iltimos, botdan foydalanish uchun kerakli kanallarga a'zo bo'ling!")
+        return
+
+    update.message.reply_text(
+        "Xush kelibsiz 'Boshqa dunyo ostonasi' o'yiniga!\n"
+        "Rasmingizni yuboring va baho oling. Eng yuqori ball to'plagan ishtirokchilar reytingda bo'ladi.\n\n"
+        "Boshqaruv buyruqlari:\n"
+        "/top - Reytingni ko'rish\n"
+        "/rules - Qoidalarni ko'rish"
+    )
+
+# Foydalanuvchi kanalga a'zo bo'lishini tekshirish
+def check_membership(user_id, bot):
+    for channel in REQUIRED_CHANNELS:
+        status = bot.get_chat_member(chat_id=channel, user_id=user_id).status
+        if status not in ["member", "administrator", "creator"]:
+            return False
+    return True
+
+# Rasmlarni qabul qilish va baholash
+def photo_handler(update, context):
+    user = update.message.from_user
+    if not check_membership(user.id, context.bot):
+        update.message.reply_text("Iltimos, botdan foydalanish uchun kerakli kanallarga a'zo bo'ling!")
+        return
+
+    file_id = update.message.photo[-1].file_id
+    if file_id in uploaded_photos:
+        update.message.reply_text("Bu rasm avval yuborilgan. Iltimos, boshqa rasm yuboring.")
+        return
+
+    uploaded_photos.add(file_id)
+    quality_score = evaluate_image(file_id, context.bot)
+
+    if user.id not in users:
+        users[user.id] = {"name": user.full_name, "score": 0}
+    users[user.id]["score"] += quality_score
+
+    # Reytingni yangilash
+    global top_100
+    top_100 = sorted(users.values(), key=lambda x: x["score"], reverse=True)[:100]
+
+    context.bot.send_photo(chat_id=ADMIN_ID, photo=file_id, caption=f"{user.full_name} tomonidan yuborilgan rasm.")
+    update.message.reply_text(f"✅ Rasm qabul qilindi! Sizga {quality_score} ball berildi.")
+
+# Rasmlarni baholash
+def evaluate_image(file_id, bot):
+    file = bot.get_file(file_id)
+    file_url = file.file_path
+    response = requests.get(file_url)
+    img = Image.open(io.BytesIO(response.content))
+
+    # Tasodifiy ball (1-10)
+    quality_score = random.randint(1, 10)
+    return quality_score
+
+# Reytingni ko'rsatish
+def show_top(update, context):
+    global top_100
+    if not top_100:
+        update.message.reply_text("Reyting hozircha bo'sh.")
+        return
+
+    reply_text = "🏆 Top 100 Foydalanuvchilar:\n\n"
+    for rank, user in enumerate(top_100, start=1):
+        reply_text += f"{rank}. {user['name']} - {user['score']} ball\n"
+    update.message.reply_text(reply_text)
+
+# Qoidalarni ko'rsatish
+def show_rules(update, context):
+    update.message.reply_text(
+        "Qoidalar:\n"
+        "1. Faqat sifatli va chiroyli rasmlar yuborish kerak.\n"
+        "2. Yalang'och yoki nomaqbul rasmlar yuborish taqiqlanadi.\n"
+        "3. Barcha rasmlar tekshiriladi va baholanadi."
+    )
+
+# Botni ishga tushurish
+def run_telegram_bot():
+    updater = Updater(token=BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("top", show_top))
+    dp.add_handler(CommandHandler("rules", show_rules))
+    dp.add_handler(MessageHandler(Filters.photo, photo_handler))
+
+    updater.start_polling()
+    updater.idle()
+
+if name == "main":
+    run_telegram_bot()
